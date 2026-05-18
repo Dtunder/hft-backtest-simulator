@@ -56,5 +56,34 @@ class HFTBacktestSimulator:
             print("            Simulation Sharpe Ratio: 2.84 | Win Rate: 62.4%")
 
 if __name__ == "__main__":
-    simulator = HFTBacktestSimulator()
-    simulator.run_simulation()
+    import argparse
+    parser = argparse.ArgumentParser(description="HFT Backtest Simulator")
+    parser.add_argument("--replay", action="store_true", help="Run with historical replay engine")
+    args = parser.parse_args()
+
+    if args.replay:
+        from replay_engine import HistoricalReplayEngine
+        print("[BACKTESTER] Running in historical replay mode...")
+        engine = HistoricalReplayEngine()
+        # Mock feed load
+        engine.load_feed("FEED_A", [
+            (1.0, "FEED_A", {"type": "ORDER", "price": 100.5, "qty": 10}),
+            (1.5, "FEED_A", {"type": "EXECUTION", "price": 100.5, "qty": 5}),
+        ])
+        engine.load_feed("FEED_B", [
+            (1.2, "FEED_B", {"type": "ORDER", "price": 100.4, "qty": 15}),
+        ])
+
+        simulated_trades = []
+        for msg in engine.stream_historical_l3_messages():
+            print(f"[REPLAY] Processing message: {msg}")
+            if msg[2]["type"] == "EXECUTION":
+                simulated_trades.append(msg)
+
+        historical_prints = [
+            (1.5, "FEED_A", {"type": "EXECUTION", "price": 100.5, "qty": 5})
+        ]
+        engine.verify_against_trade_prints(simulated_trades, historical_prints)
+    else:
+        simulator = HFTBacktestSimulator()
+        simulator.run_simulation()
