@@ -1,5 +1,7 @@
 import math
 import random
+import argparse
+from replay_engine import HistoricalReplayEngine
 
 class HFTBacktestSimulator:
     """
@@ -56,5 +58,39 @@ class HFTBacktestSimulator:
             print("            Simulation Sharpe Ratio: 2.84 | Win Rate: 62.4%")
 
 if __name__ == "__main__":
-    simulator = HFTBacktestSimulator()
-    simulator.run_simulation()
+    parser = argparse.ArgumentParser(description="HFT Backtest Simulator")
+    parser.add_argument("--replay", action="store_true", help="Run with historical replay engine")
+    args = parser.parse_args()
+
+    if args.replay:
+        print("[SIMULATOR] Initializing Historical Replay Engine...")
+        engine = HistoricalReplayEngine()
+
+        # Load some mock data for demonstration
+        feed1 = [
+            {'timestamp': 1.0000001, 'type': 'order', 'price': 100.5, 'qty': 10},
+            {'timestamp': 1.0000003, 'type': 'execution', 'price': 100.5, 'qty': 5}
+        ]
+        feed2 = [
+            {'timestamp': 1.0000002, 'type': 'order', 'price': 100.4, 'qty': 20},
+            {'timestamp': 1.0000004, 'type': 'cancel', 'price': 100.4, 'qty': 20}
+        ]
+        engine.load_feed(feed1)
+        engine.load_feed(feed2)
+
+        # Mock historical prints
+        engine.load_historical_prints([
+            {'timestamp': 1.0000003, 'type': 'execution', 'price': 100.5, 'qty': 5}
+        ])
+
+        simulated_trades = []
+        for event in engine.stream():
+            print(f"[REPLAY] Processed event: {event}")
+            if event['type'] == 'execution':
+                simulated_trades.append(event)
+
+        engine.verify_against_trade_prints(simulated_trades)
+
+    else:
+        simulator = HFTBacktestSimulator()
+        simulator.run_simulation()
