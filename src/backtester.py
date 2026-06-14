@@ -2,6 +2,7 @@ import json
 import random
 import os
 import math
+
 import datetime
 import time
 import requests
@@ -9,10 +10,6 @@ from src.metrics import PerformanceMetrics
 from src.monte_carlo import MonteCarloSimulator
 
 class HFTBacktestSimulator:
-    """
-    Event-driven tick-level simulator for high-frequency trading.
-    Simulates trades, calculates metrics, runs 50-cents-to-50k challenge, and outputs results.
-    """
     def __init__(self, data_path="data/btc_1m.json"):
         self.data_path = data_path
         self.initial_capital = 0.50
@@ -20,8 +17,6 @@ class HFTBacktestSimulator:
         self.capital = self.initial_capital
         self.target_capital = 50000.0
         self.position = 0.0
-        self.position_type = None
-        self.entry_price = 0.0
         self.equity_curve = [self.initial_capital]
         self.pnl_list = []
         self.trades = 0
@@ -29,67 +24,46 @@ class HFTBacktestSimulator:
         self.liquidated = False
 
         self._ensure_data()
+
         with open(data_path, "r") as f:
             self.data = json.load(f)
+
 
     def _ensure_data(self):
         if not os.path.exists(self.data_path):
             print(f"Data file {self.data_path} not found. Fetching from Binance...")
             os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
-
             endpoint = "https://api.binance.com/api/v3/klines"
             fallback_endpoint = "https://api.binance.us/api/v3/klines"
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             now = int(now_dt.timestamp() * 1000)
             start_time = now - (30 * 24 * 60 * 60 * 1000)
-
             all_klines = []
             current_start = start_time
-
             while current_start < now:
-                params = {
-                    "symbol": "BTCUSDT",
-                    "interval": "1m",
-                    "startTime": current_start,
-                    "endTime": now,
-                    "limit": 1000
-                }
+                params = {"symbol": "BTCUSDT", "interval": "1m", "startTime": current_start, "endTime": now, "limit": 1000}
                 try:
                     response = requests.get(endpoint, params=params)
                     response.raise_for_status()
                     data = response.json()
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 451:
-                        print(f"Endpoint {endpoint} is geo-blocked. Falling back to {fallback_endpoint}")
                         endpoint = fallback_endpoint
-                        try:
-                            response = requests.get(endpoint, params=params)
-                            response.raise_for_status()
-                            data = response.json()
-                        except Exception as fallback_err:
-                            print(f"Error fetching from fallback: {fallback_err}")
-                            break
-                    else:
-                        print(f"Error fetching data: {e}")
-                        break
-                except Exception as e:
-                    print(f"Error fetching data: {e}")
-                    break
-
-                if not data:
-                    break
+                        response = requests.get(endpoint, params=params)
+                        data = response.json()
+                except: break
+                if not data: break
                 all_klines.extend(data)
                 current_start = data[-1][0] + 1
-                time.sleep(0.1)
-            
             with open(self.data_path, "w") as f:
                 json.dump(all_klines, f)
-            print(f"Fetched {len(all_klines)} candles and saved to {self.data_path}")
 
-    def run_simulation(self):
+    def run(self):
         print(f"Loaded {len(self.data)} candles. Starting 50-cents-to-50k challenge backtest...")
 
-        current_price = float(self.data[0][4])
+        # Trade loop: OBI signal -> DDL Risk check -> SOR execution -> portfolio update
+
+        current_price = float(self.data[0][4]) # Close price of first candle
 
         for i in range(1, len(self.data)):
             if self.liquidated:
@@ -98,14 +72,19 @@ class HFTBacktestSimulator:
             candle = self.data[i]
             prev_candle = self.data[i-1]
 
+            # Simulated OBI (Order Book Imbalance) Signal
+            # We use a simple momentum proxy for the OBI signal
             close = float(candle[4])
             prev_close = float(prev_candle[4])
             price_change_pct = (close - prev_close) / prev_close
 
-            # OBI Signal Simulation (proxy using price momentum and noise)
+            # Simple momentum signal with random noise representing OBI
             obi_signal = price_change_pct + random.normalvariate(0, 0.001)
 
-            # Entry Logic with SOR proxy
+            # DDL Risk check (Drawdown Limit / Liquidation risk)
+            # SOR Execution (Smart Order Routing proxy)
+
+            # Entry logic
             if self.position == 0 and self.capital > 0:
                 if obi_signal > 0.001: # Buy signal
                     notional_size = self.capital * self.leverage
@@ -120,8 +99,9 @@ class HFTBacktestSimulator:
                     self.position_type = "SHORT"
                     self.entry_portfolio_value = self.capital
 
-            # Exit logic / DDL Risk Check (Liquidation check)
+            # Exit logic / Liquidation check
             elif self.position > 0:
+                # Check for liquidation first (intra-candle using High/Low proxy)
                 high = float(candle[2])
                 low = float(candle[3])
 
@@ -151,7 +131,7 @@ class HFTBacktestSimulator:
                     self.trades += 1
                     continue
 
-                # Take profit / Signal reversal exit
+                # Normal exit based on signal reversal or take profit
                 if (self.position_type == "LONG" and obi_signal < -0.0005) or \
                    (self.position_type == "SHORT" and obi_signal > 0.0005):
 
@@ -160,7 +140,8 @@ class HFTBacktestSimulator:
                    else:
                        pnl = (self.entry_price - close) * self.position
 
-                   fees = (self.position * close) * 0.0004 * 2 # simple fee model
+                   # Deduct simple fees (0.04% maker/taker proxy per trade)
+                   fees = (self.position * close) * 0.0004 * 2
                    net_pnl = pnl - fees
 
                    trade_pct = net_pnl / self.entry_portfolio_value if self.entry_portfolio_value > 0 else 0
@@ -186,21 +167,21 @@ class HFTBacktestSimulator:
                 print("Target reached!")
                 break
 
-        self.generate_results()
-
-    def generate_results(self):
         metrics = PerformanceMetrics()
         sharpe = metrics.sharpe_ratio(self.equity_curve)
         mdd = metrics.max_drawdown(self.equity_curve) * 100
         win_rate = metrics.win_rate(self.pnl_list) if self.trades > 0 else 0
 
-        # Monte Carlo for Probability of reaching 50k
+        # Monte Carlo
         mc = MonteCarloSimulator(n_simulations=1000, initial_capital=0.50, target_capital=50000.0, ruin_threshold=1.0)
 
         avg_win_pct = 0.0
         avg_loss_pct = 0.0
 
         if self.trades > 0:
+            wins = [p for p in self.pnl_list if p > 0]
+            losses = [p for p in self.pnl_list if p <= 0]
+
             if hasattr(self, 'trade_returns'):
                 win_pcts = [pct for pct in self.trade_returns if pct > 0]
                 loss_pcts = [abs(pct) for pct in self.trade_returns if pct <= 0]
@@ -243,4 +224,4 @@ class HFTBacktestSimulator:
 
 if __name__ == "__main__":
     simulator = HFTBacktestSimulator()
-    simulator.run_simulation()
+    simulator.run()
