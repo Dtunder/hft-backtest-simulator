@@ -225,4 +225,3 @@ class HFTBacktestSimulator:
 if __name__ == "__main__":
     simulator = HFTBacktestSimulator()
     simulator.run()
-# done
