@@ -38,6 +38,7 @@ class HFTBacktestSimulator:
             os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
 
             endpoint = "https://api.binance.com/api/v3/klines"
+            fallback_endpoint = "https://api.binance.us/api/v3/klines"
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             now = int(now_dt.timestamp() * 1000)
             start_time = now - (30 * 24 * 60 * 60 * 1000)
@@ -57,14 +58,29 @@ class HFTBacktestSimulator:
                     response = requests.get(endpoint, params=params)
                     response.raise_for_status()
                     data = response.json()
-                    if not data:
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 451:
+                        print(f"Endpoint {endpoint} is geo-blocked. Falling back to {fallback_endpoint}")
+                        endpoint = fallback_endpoint
+                        try:
+                            response = requests.get(endpoint, params=params)
+                            response.raise_for_status()
+                            data = response.json()
+                        except Exception as fallback_err:
+                            print(f"Error fetching from fallback: {fallback_err}")
+                            break
+                    else:
+                        print(f"Error fetching data: {e}")
                         break
-                    all_klines.extend(data)
-                    current_start = data[-1][0] + 1
-                    time.sleep(0.1)
                 except Exception as e:
                     print(f"Error fetching data: {e}")
                     break
+
+                if not data:
+                    break
+                all_klines.extend(data)
+                current_start = data[-1][0] + 1
+                time.sleep(0.1)
             
             with open(self.data_path, "w") as f:
                 json.dump(all_klines, f)
