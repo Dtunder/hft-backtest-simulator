@@ -232,7 +232,7 @@ class HFTBacktestSimulator:
             "Max Drawdown": mdd,
             "Total Trades": self.trades,
             "Win Rate": win_rate,
-            "Probability of Reaching 50k": prob_target
+            "Probability of reaching 50,000 USDT without liquidation": prob_target
         }
 
         with open("backtest_results.json", "w") as f:
