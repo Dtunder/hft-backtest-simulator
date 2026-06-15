@@ -2,7 +2,6 @@ import json
 import random
 import os
 import math
-
 import datetime
 import time
 import requests
@@ -17,6 +16,8 @@ class HFTBacktestSimulator:
         self.capital = self.initial_capital
         self.target_capital = 50000.0
         self.position = 0.0
+        self.position_type = None
+        self.entry_price = 0.0
         self.equity_curve = [self.initial_capital]
         self.pnl_list = []
         self.trades = 0
@@ -61,8 +62,6 @@ class HFTBacktestSimulator:
     def run(self):
         print(f"Loaded {len(self.data)} candles. Starting 50-cents-to-50k challenge backtest...")
 
-        # Trade loop: OBI signal -> DDL Risk check -> SOR execution -> portfolio update
-
         current_price = float(self.data[0][4]) # Close price of first candle
 
         for i in range(1, len(self.data)):
@@ -72,19 +71,12 @@ class HFTBacktestSimulator:
             candle = self.data[i]
             prev_candle = self.data[i-1]
 
-            # Simulated OBI (Order Book Imbalance) Signal
-            # We use a simple momentum proxy for the OBI signal
             close = float(candle[4])
             prev_close = float(prev_candle[4])
             price_change_pct = (close - prev_close) / prev_close
 
-            # Simple momentum signal with random noise representing OBI
             obi_signal = price_change_pct + random.normalvariate(0, 0.001)
 
-            # DDL Risk check (Drawdown Limit / Liquidation risk)
-            # SOR Execution (Smart Order Routing proxy)
-
-            # Entry logic
             if self.position == 0 and self.capital > 0:
                 if obi_signal > 0.001: # Buy signal
                     notional_size = self.capital * self.leverage
@@ -99,9 +91,7 @@ class HFTBacktestSimulator:
                     self.position_type = "SHORT"
                     self.entry_portfolio_value = self.capital
 
-            # Exit logic / Liquidation check
             elif self.position > 0:
-                # Check for liquidation first (intra-candle using High/Low proxy)
                 high = float(candle[2])
                 low = float(candle[3])
 
@@ -131,7 +121,6 @@ class HFTBacktestSimulator:
                     self.trades += 1
                     continue
 
-                # Normal exit based on signal reversal or take profit
                 if (self.position_type == "LONG" and obi_signal < -0.0005) or \
                    (self.position_type == "SHORT" and obi_signal > 0.0005):
 
@@ -140,7 +129,6 @@ class HFTBacktestSimulator:
                    else:
                        pnl = (self.entry_price - close) * self.position
 
-                   # Deduct simple fees (0.04% maker/taker proxy per trade)
                    fees = (self.position * close) * 0.0004 * 2
                    net_pnl = pnl - fees
 
@@ -152,7 +140,6 @@ class HFTBacktestSimulator:
                    self.position = 0
                    self.trades += 1
 
-            # Update equity curve
             current_portfolio_value = self.capital
             if self.position > 0:
                 if self.position_type == "LONG":
@@ -167,25 +154,23 @@ class HFTBacktestSimulator:
                 print("Target reached!")
                 break
 
+        self.generate_results()
+
+    def generate_results(self):
         metrics = PerformanceMetrics()
         sharpe = metrics.sharpe_ratio(self.equity_curve)
         mdd = metrics.max_drawdown(self.equity_curve) * 100
         win_rate = metrics.win_rate(self.pnl_list) if self.trades > 0 else 0
 
-        # Monte Carlo
         mc = MonteCarloSimulator(n_simulations=1000, initial_capital=0.50, target_capital=50000.0, ruin_threshold=1.0)
 
         avg_win_pct = 0.0
         avg_loss_pct = 0.0
 
         if self.trades > 0:
-            wins = [p for p in self.pnl_list if p > 0]
-            losses = [p for p in self.pnl_list if p <= 0]
-
             if hasattr(self, 'trade_returns'):
                 win_pcts = [pct for pct in self.trade_returns if pct > 0]
                 loss_pcts = [abs(pct) for pct in self.trade_returns if pct <= 0]
-
                 if win_pcts:
                     avg_win_pct = sum(win_pcts) / len(win_pcts)
                 if loss_pcts:
@@ -218,9 +203,7 @@ class HFTBacktestSimulator:
 
         with open("backtest_results.json", "w") as f:
             json.dump(results, f, indent=4)
-
-        print("Backtest results written to backtest_results.json")
-        print(json.dumps(results, indent=4))
+        print("Results generated.")
 
 if __name__ == "__main__":
     simulator = HFTBacktestSimulator()
