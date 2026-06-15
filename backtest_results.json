@@ -1,8 +1,8 @@
 {
     "Final Capital": 0,
-    "Sharpe Ratio": -4.2689,
+    "Sharpe Ratio": -4.4668,
     "Max Drawdown": 100.0,
-    "Total Trades": 992,
-    "Win Rate": 0.08568548387096774,
-    "Probability of Reaching 50k": 0.0
+    "Total Trades": 3915,
+    "Win Rate": 0.07790549169859515,
+    "Probability of reaching 50,000 USDT without liquidation": 0.0
 }
