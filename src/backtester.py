@@ -58,7 +58,7 @@ class HFTBacktestSimulator:
             with open(self.data_path, "w") as f:
                 json.dump(all_klines, f)
 
-    def run(self):
+    def run_simulation(self):
         print(f"Loaded {len(self.data)} candles. Starting 50-cents-to-50k challenge backtest...")
 
         # Trade loop: OBI signal -> DDL Risk check -> SOR execution -> portfolio update
@@ -224,4 +224,4 @@ class HFTBacktestSimulator:
 
 if __name__ == "__main__":
     simulator = HFTBacktestSimulator()
-    simulator.run()
+    simulator.run_simulation()
