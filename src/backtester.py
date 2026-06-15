@@ -32,54 +32,38 @@ class HFTBacktestSimulator:
         with open(data_path, "r") as f:
             self.data = json.load(f)
 
-        if not self.data:
-            raise ValueError(f"No data loaded from {data_path}. Ensure the Binance API fetch was successful.")
-
     def _ensure_data(self):
         if not os.path.exists(self.data_path):
             print(f"Data file {self.data_path} not found. Fetching from Binance...")
             os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
 
-            endpoints = [
-                "https://api.binance.com/api/v3/klines",
-                "https://api.binance.us/api/v3/klines"
-            ]
-
+            endpoint = "https://api.binance.com/api/v3/klines"
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             now = int(now_dt.timestamp() * 1000)
             start_time = now - (30 * 24 * 60 * 60 * 1000)
 
             all_klines = []
+            current_start = start_time
 
-            for endpoint in endpoints:
-                current_start = start_time
-                all_klines = []
-                success = True
-
-                print(f"Trying endpoint: {endpoint}")
-                while current_start < now:
-                    params = {
-                        "symbol": "BTCUSDT",
-                        "interval": "1m",
-                        "startTime": current_start,
-                        "endTime": now,
-                        "limit": 1000
-                    }
-                    try:
-                        response = requests.get(endpoint, params=params)
-                        response.raise_for_status()
-                        data = response.json()
-                        if not data:
-                            break
-                        all_klines.extend(data)
-                        current_start = data[-1][0] + 1
-                        time.sleep(0.1)
-                    except Exception as e:
-                        print(f"Error fetching data from {endpoint}: {e}")
-                        success = False
+            while current_start < now:
+                params = {
+                    "symbol": "BTCUSDT",
+                    "interval": "1m",
+                    "startTime": current_start,
+                    "endTime": now,
+                    "limit": 1000
+                }
+                try:
+                    response = requests.get(endpoint, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                    if not data:
                         break
-
-                if success and all_klines:
+                    all_klines.extend(data)
+                    current_start = data[-1][0] + 1
+                    time.sleep(0.1)
+                except Exception as e:
+                    print(f"Error fetching data: {e}")
                     break
             
             with open(self.data_path, "w") as f:
@@ -232,7 +216,7 @@ class HFTBacktestSimulator:
             "Max Drawdown": mdd,
             "Total Trades": self.trades,
             "Win Rate": win_rate,
-            "Probability of reaching 50,000 USDT without liquidation": prob_target
+            "Probability of Reaching 50k": prob_target
         }
 
         with open("backtest_results.json", "w") as f:
