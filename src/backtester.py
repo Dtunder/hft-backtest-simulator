@@ -5,7 +5,6 @@ import math
 import datetime
 import time
 import requests
-import argparse
 from src.metrics import PerformanceMetrics
 from src.monte_carlo import MonteCarloSimulator
 
@@ -14,9 +13,8 @@ class HFTBacktestSimulator:
     Event-driven tick-level simulator for high-frequency trading.
     Simulates trades, calculates metrics, runs 50-cents-to-50k challenge, and outputs results.
     """
-    def __init__(self, data_path="data/btc_1m.json", replay=False):
+    def __init__(self, data_path="data/btc_1m.json"):
         self.data_path = data_path
-        self.replay = replay
         self.initial_capital = 0.50
         self.leverage = 100
         self.capital = self.initial_capital
@@ -89,7 +87,9 @@ class HFTBacktestSimulator:
             print(f"Fetched {len(all_klines)} candles and saved to {self.data_path}")
 
     def run_simulation(self):
-        print(f"Loaded {len(self.data)} candles. Starting 50-cents-to-50k challenge backtest (Tick-Level from OHLCV)...")
+        print(f"Loaded {len(self.data)} candles. Starting 50-cents-to-50k challenge backtest...")
+
+        current_price = float(self.data[0][4])
 
         for i in range(1, len(self.data)):
             if self.liquidated:
@@ -98,105 +98,92 @@ class HFTBacktestSimulator:
             candle = self.data[i]
             prev_candle = self.data[i-1]
 
-            open_p = float(candle[1])
-            high_p = float(candle[2])
-            low_p = float(candle[3])
-            close_p = float(candle[4])
-            prev_close_p = float(prev_candle[4])
+            close = float(candle[4])
+            prev_close = float(prev_candle[4])
+            price_change_pct = (close - prev_close) / prev_close
 
-            # Generate synthetic ticks from OHLCV
-            if close_p > open_p:
-                ticks = [open_p, low_p, high_p, close_p]
-            else:
-                ticks = [open_p, high_p, low_p, close_p]
-
-            # OBI Signal Simulation
-            price_change_pct = (close_p - prev_close_p) / prev_close_p
+            # OBI Signal Simulation (proxy using price momentum and noise)
             obi_signal = price_change_pct + random.normalvariate(0, 0.001)
 
-            for tick_price in ticks:
-                if self.liquidated:
-                    break
+            # Entry Logic with SOR proxy
+            if self.position == 0 and self.capital > 0:
+                if obi_signal > 0.001: # Buy signal
+                    notional_size = self.capital * self.leverage
+                    self.position = notional_size / close
+                    self.entry_price = close
+                    self.position_type = "LONG"
+                    self.entry_portfolio_value = self.capital
+                elif obi_signal < -0.001: # Sell signal
+                    notional_size = self.capital * self.leverage
+                    self.position = notional_size / close
+                    self.entry_price = close
+                    self.position_type = "SHORT"
+                    self.entry_portfolio_value = self.capital
 
-                # Entry Logic with SOR proxy
-                if self.position == 0 and self.capital > 0:
-                    if obi_signal > 0.001: # Buy signal
-                        notional_size = self.capital * self.leverage
-                        self.position = notional_size / tick_price
-                        self.entry_price = tick_price
-                        self.position_type = "LONG"
-                        self.entry_portfolio_value = self.capital
-                    elif obi_signal < -0.001: # Sell signal
-                        notional_size = self.capital * self.leverage
-                        self.position = notional_size / tick_price
-                        self.entry_price = tick_price
-                        self.position_type = "SHORT"
-                        self.entry_portfolio_value = self.capital
+            # Exit logic / DDL Risk Check (Liquidation check)
+            elif self.position > 0:
+                high = float(candle[2])
+                low = float(candle[3])
 
-                # Exit logic / DDL Risk Check (Liquidation check)
-                elif self.position > 0:
-                    liquidation_price_long = self.entry_price * (1 - self.liquidation_threshold)
-                    liquidation_price_short = self.entry_price * (1 + self.liquidation_threshold)
+                liquidation_price_long = self.entry_price * (1 - self.liquidation_threshold)
+                liquidation_price_short = self.entry_price * (1 + self.liquidation_threshold)
 
-                    if self.position_type == "LONG" and tick_price <= liquidation_price_long:
-                        trade_pct = -1.0 # 100% loss of capital due to liquidation
-                        self.capital = 0
-                        self.position = 0
-                        self.liquidated = True
-                        self.pnl_list.append(-self.equity_curve[-1])
-                        if not hasattr(self, 'trade_returns'): self.trade_returns = []
-                        self.trade_returns.append(trade_pct)
-                        self.equity_curve.append(0)
-                        self.trades += 1
-                        continue
-                    elif self.position_type == "SHORT" and tick_price >= liquidation_price_short:
-                        trade_pct = -1.0 # 100% loss of capital due to liquidation
-                        self.capital = 0
-                        self.position = 0
-                        self.liquidated = True
-                        self.pnl_list.append(-self.equity_curve[-1])
-                        if not hasattr(self, 'trade_returns'): self.trade_returns = []
-                        self.trade_returns.append(trade_pct)
-                        self.equity_curve.append(0)
-                        self.trades += 1
-                        continue
+                if self.position_type == "LONG" and low <= liquidation_price_long:
+                    trade_pct = -1.0 # 100% loss of capital due to liquidation
+                    self.capital = 0
+                    self.position = 0
+                    self.liquidated = True
+                    self.pnl_list.append(-self.equity_curve[-1])
+                    if not hasattr(self, 'trade_returns'): self.trade_returns = []
+                    self.trade_returns.append(trade_pct)
+                    self.equity_curve.append(0)
+                    self.trades += 1
+                    continue
+                elif self.position_type == "SHORT" and high >= liquidation_price_short:
+                    trade_pct = -1.0 # 100% loss of capital due to liquidation
+                    self.capital = 0
+                    self.position = 0
+                    self.liquidated = True
+                    self.pnl_list.append(-self.equity_curve[-1])
+                    if not hasattr(self, 'trade_returns'): self.trade_returns = []
+                    self.trade_returns.append(trade_pct)
+                    self.equity_curve.append(0)
+                    self.trades += 1
+                    continue
 
-                    # Take profit / Signal reversal exit
-                    if (self.position_type == "LONG" and obi_signal < -0.0005) or \
-                       (self.position_type == "SHORT" and obi_signal > 0.0005):
+                # Take profit / Signal reversal exit
+                if (self.position_type == "LONG" and obi_signal < -0.0005) or \
+                   (self.position_type == "SHORT" and obi_signal > 0.0005):
 
-                       if self.position_type == "LONG":
-                           pnl = (tick_price - self.entry_price) * self.position
-                       else:
-                           pnl = (self.entry_price - tick_price) * self.position
+                   if self.position_type == "LONG":
+                       pnl = (close - self.entry_price) * self.position
+                   else:
+                       pnl = (self.entry_price - close) * self.position
 
-                       fees = (self.position * tick_price) * 0.0004 * 2 # simple fee model
-                       net_pnl = pnl - fees
+                   fees = (self.position * close) * 0.0004 * 2 # simple fee model
+                   net_pnl = pnl - fees
 
-                       trade_pct = net_pnl / self.entry_portfolio_value if self.entry_portfolio_value > 0 else 0
-                       if not hasattr(self, 'trade_returns'): self.trade_returns = []
-                       self.trade_returns.append(trade_pct)
-                       self.capital += net_pnl
-                       self.pnl_list.append(net_pnl)
-                       self.position = 0
-                       self.trades += 1
+                   trade_pct = net_pnl / self.entry_portfolio_value if self.entry_portfolio_value > 0 else 0
+                   if not hasattr(self, 'trade_returns'): self.trade_returns = []
+                   self.trade_returns.append(trade_pct)
+                   self.capital += net_pnl
+                   self.pnl_list.append(net_pnl)
+                   self.position = 0
+                   self.trades += 1
 
-                # Update equity curve
-                current_portfolio_value = self.capital
-                if self.position > 0:
-                    if self.position_type == "LONG":
-                        unrealized_pnl = (tick_price - self.entry_price) * self.position
-                    else:
-                        unrealized_pnl = (self.entry_price - tick_price) * self.position
-                    current_portfolio_value += unrealized_pnl
+            # Update equity curve
+            current_portfolio_value = self.capital
+            if self.position > 0:
+                if self.position_type == "LONG":
+                    unrealized_pnl = (close - self.entry_price) * self.position
+                else:
+                    unrealized_pnl = (self.entry_price - close) * self.position
+                current_portfolio_value += unrealized_pnl
 
-                self.equity_curve.append(current_portfolio_value)
-
-                if current_portfolio_value >= self.target_capital:
-                    print("Target reached!")
-                    break
+            self.equity_curve.append(current_portfolio_value)
 
             if current_portfolio_value >= self.target_capital:
+                print("Target reached!")
                 break
 
         self.generate_results()
@@ -245,7 +232,7 @@ class HFTBacktestSimulator:
             "Max Drawdown": mdd,
             "Total Trades": self.trades,
             "Win Rate": win_rate,
-            "Probability of Reaching 50k": prob_target
+            "Probability of reaching 50,000 USDT without liquidation": prob_target
         }
 
         with open("backtest_results.json", "w") as f:
@@ -255,9 +242,5 @@ class HFTBacktestSimulator:
         print(json.dumps(results, indent=4))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="HFT Tick-Level Backtester")
-    parser.add_argument("--replay", action="store_true", help="Use historical L3 tick-data replay engine")
-    args = parser.parse_args()
-
-    simulator = HFTBacktestSimulator(replay=args.replay)
+    simulator = HFTBacktestSimulator()
     simulator.run_simulation()
